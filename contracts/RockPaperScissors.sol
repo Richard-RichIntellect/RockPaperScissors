@@ -89,7 +89,6 @@ contract RockPaperScissors {
       players[playersUniqueKey].playerOneBalance = 0;
       players[playersUniqueKey].playerTwoBalance = winnings;
     }
-
   }
 
   function withdrawWinnings(bytes32 playersUniqueKey, uint withdrawalAmount) public

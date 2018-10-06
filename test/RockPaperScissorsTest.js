@@ -149,7 +149,6 @@ contract('RockPaperScissors', function (accounts) {
       assert.isTrue(false);
     }
 
-
     return instance.play(playerHash,  { from: owner })
       .then(result => {
         console.log(result);
