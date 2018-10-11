@@ -1,20 +1,25 @@
 pragma solidity 0.4.24;
 
 contract RockPaperScissors {
-  enum HandGestureEnum {Rock,Paper,Scissors,Nothing}
+  enum HandGestureEnum {Rock,Paper,Scissors,None}
 
-  struct PlayersStruct
-  {
-    uint winnings;
-    address winnersAddress;
-    uint playerOneEntryDateTimeStamp;
-    HandGestureEnum playerOneHandGesture;
-    bool complete;
+  enum GameStage {DoesNotExist, PlayerOneMoved, PlayerTwoMoved, GameOver}
+
+  struct GameStruct {
+    address playerOne;
+    address playerTwo;
+    bytes32 playerOneMoveHash;
+    HandGestureEnum playerTwoMove;
+    GameStage gameStage;
+    uint gameNumber;
+    uint playerOneMoveTimestamp;
+    mapping (address => uint) gameBalances;
   }
 
   uint timeLimit = 1 days;
+  uint private gameNumber = 1;
 
-  mapping (bytes32 => PlayersStruct) public players;
+  mapping (bytes32 => GameStruct) public game;
   mapping (bytes32 => bool) public gameKeyUsed;
   mapping (address => uint) public playersBalances;
 
@@ -22,91 +27,142 @@ contract RockPaperScissors {
   event LogWinner(address player, uint winnings);
   event LogWithdrawalAmount(address player, uint amount);
   event LogTransferAmount(address player, uint amount);
+  event LogTie(address playerOne, uint playerOneBalance, address playerTwo, uint playerTwoBalance);
 
   constructor() public {
 
   }
 
-  function generateNewGameKey() public view returns(bytes32) {
-	  return keccak256(abi.encodePacked(msg.sender,now, address(this)));
+  
+
+  function generateGameKey() public view returns(bytes32) {
+	  return keccak256(abi.encodePacked(msg.sender, address(this),gameNumber));
+  }
+
+  function generateHandMovement(HandGestureEnum handMovement,bytes32 key) public view returns(bytes32) {
+	  return keccak256(abi.encodePacked(address(this),gameNumber,handMovement,key));
   }
 
 
-
-  function playerOneStartGameWithFunds(bytes32 playersUniqueKey,HandGestureEnum handGesture, bytes32 oldWinnings) public payable 
+  function playerOneStartGameWithFunds(bytes32 gameKey, bytes32 handGestureHash, bool oldWinnings) public payable returns (bytes32)
   {
-	  emit LogAddToPlayerBalance(msg.sender, msg.value);
+    emit LogAddToPlayerBalance(msg.sender, msg.value);
+
+    require (game[gameKey].gameStage == GameStage.DoesNotExist,"This game has already started.");
+    require (!gameKeyUsed[gameKey], "Game key has been used.");
+    require (!oldWinnings || (oldWinnings && playersBalances[msg.sender] > 0),"You have no funds to transfer.");
+   
+    gameKeyUsed[gameKey] = true;
+    gameNumber += 1;
+
+    game[gameKey].gameStage = GameStage.PlayerOneMoved;
+
     uint additionalFunds = 0;
-    if (oldWinnings!=0)
+
+
+    game[gameKey].playerOne = msg.sender;
+    game[gameKey].playerOneMoveHash = handGestureHash;
+    if (oldWinnings)
     {
-      require (players[playersUniqueKey].winnersAddress == msg.sender,"Unathorized request.");
-      require (players[playersUniqueKey].winnings != 0,"No funds to transfer");
-      require (!gameKeyUsed[playersUniqueKey],"Game key has been used.");
-      gameKeyUsed[playersUniqueKey] = true;
-      additionalFunds = players[playersUniqueKey].winnings;
-      players[playersUniqueKey].winnings = 0;
+      additionalFunds = playersBalances[msg.sender];
+      game[gameKey].gameBalances[msg.sender] = 0;
       emit LogWithdrawalAmount(msg.sender,additionalFunds);
     }
-    players[playersUniqueKey].winnings = msg.value + additionalFunds;
-    players[playersUniqueKey].winnersAddress = msg.sender;
-    players[playersUniqueKey].playerOneHandGesture = handGesture;
-    players[playersUniqueKey].playerOneEntryDateTimeStamp = now;
+    game[gameKey].gameBalances[msg.sender] = msg.value + additionalFunds;
+    game[gameKey].playerOneMoveTimestamp = now;
+    game[gameKey].gameNumber = gameNumber;
   }
 
  
-  function playerTwoEnterAndPlayWithFunds(bytes32 playersUniqueKey, HandGestureEnum handGesture, bytes32 oldWinnings) public payable
+  function playerTwoEnterAndPlayWithFunds(bytes32 gameKey, HandGestureEnum handGesture, bool oldWinnings) public payable
   {
     emit LogAddToPlayerBalance(msg.sender, msg.value);
-    require (players[playersUniqueKey].playerOneEntryDateTimeStamp!=0,"Cannot find matching game key");
-    require (playersUniqueKey!=0,"playersUniqueKey required");
-    require (!players[playersUniqueKey].complete,"Game completed.");
-    players[playersUniqueKey].complete = true;
+    require (gameKey!=0, "Game key invalid");
+    require (game[gameKey].gameStage == GameStage.PlayerOneMoved,"This game has already started.");
+    require (!oldWinnings || (oldWinnings && playersBalances[msg.sender] > 0),"You have no funds to transfer.");
+    
+    game[gameKey].gameStage = GameStage.PlayerTwoMoved;
+
     uint additionalFunds = 0;
 
-    if (oldWinnings!=0)
+    if (oldWinnings)
     {
-
-      require (players[playersUniqueKey].winnersAddress == msg.sender,"Unathorized request.");
-      require (players[playersUniqueKey].winnings != 0,"No funds to transfer");
-      additionalFunds = players[oldWinnings].winnings;
-      players[oldWinnings].winnings = 0;
-      emit LogTransferAmount(msg.sender,additionalFunds);
-
+      additionalFunds = playersBalances[msg.sender];
+      game[gameKey].gameBalances[msg.sender] = 0;
+      emit LogWithdrawalAmount(msg.sender,additionalFunds);
     }
 
-    uint totalWinningsAmount = players[playersUniqueKey].winnings + msg.value + additionalFunds;
-   
-    if (uint(players[playersUniqueKey].playerOneHandGesture)-uint(handGesture)+5 % 3 == 0)
+    game[gameKey].playerTwo = msg.sender;
+    game[gameKey].gameBalances[msg.sender] += msg.value + additionalFunds;
+    game[gameKey].playerTwoMove = handGesture;
+
+
+  }
+
+  function revealResults(bytes32 gameKey,bytes32 playerOnePrivateKey) public
+  {
+    require (gameKey!=0, "Game key invalid");
+    require (game[gameKey].playerOne == msg.sender,"You are not player one in this game.");
+    require (game[gameKey].gameStage == GameStage.PlayerTwoMoved,"Not all players have made their moves.");
+    game[gameKey].gameStage = GameStage.GameOver;
+
+    HandGestureEnum playerOneHandGesture = HandGestureEnum.None;
+    bytes32 playerOneMove = game[gameKey].playerOneMoveHash;
+    if (playerOneMove == generateHandMovement(HandGestureEnum.Rock,playerOnePrivateKey))
+      playerOneHandGesture = HandGestureEnum.Rock;
+    else if (playerOneMove == generateHandMovement(HandGestureEnum.Paper,playerOnePrivateKey))
+      playerOneHandGesture = HandGestureEnum.Paper;
+    else if (playerOneMove == generateHandMovement(HandGestureEnum.Scissors,playerOnePrivateKey)) 
+      playerOneHandGesture = HandGestureEnum.Scissors;
+
+    uint totalWinnings = game[gameKey].gameBalances[game[gameKey].playerOne] + game[gameKey].gameBalances[game[gameKey].playerTwo];
+
+    if (uint(playerOneHandGesture)-uint(game[gameKey].playerTwoMove)+5 % 3 == 0)
     {
-      emit LogWinner(players[playersUniqueKey].winnersAddress,totalWinningsAmount);
-      playersBalances[players[playersUniqueKey].winnersAddress] += totalWinningsAmount;
+      emit LogWinner(game[gameKey].playerOne,totalWinnings);
+      playersBalances[game[gameKey].playerOne] += totalWinnings;
+      game[gameKey].gameBalances[game[gameKey].playerOne] = 0;
+      game[gameKey].gameBalances[game[gameKey].playerTwo] = 0;
     }
     else
     {
-      if (uint(players[playersUniqueKey].playerOneHandGesture)-uint(handGesture)+5 % 3 == 1)
+      if (uint(playerOneHandGesture)-uint(game[gameKey].playerTwoMove)+5 % 3 == 1)
       {
-        emit LogWinner(msg.sender,players[playersUniqueKey].winnings);
-        playersBalances[msg.sender] += totalWinningsAmount;
-        players[playersUniqueKey].winnersAddress = msg.sender;
+        emit LogWinner(game[gameKey].playerTwo,totalWinnings);
+        playersBalances[game[gameKey].playerTwo] += totalWinnings;
+        game[gameKey].gameBalances[game[gameKey].playerOne] = 0;
+        game[gameKey].gameBalances[game[gameKey].playerTwo] = 0;
       }
       else
       {
-        revert("It's a tie!");
+        emit LogTie(game[gameKey].playerOne,game[gameKey].gameBalances[game[gameKey].playerOne], game[gameKey].playerTwo,game[gameKey].gameBalances[game[gameKey].playerTwo]);
+        playersBalances[game[gameKey].playerOne] += game[gameKey].gameBalances[game[gameKey].playerOne];
+        playersBalances[game[gameKey].playerTwo] += game[gameKey].gameBalances[game[gameKey].playerTwo];
+        game[gameKey].gameBalances[game[gameKey].playerOne] = 0;
+        game[gameKey].gameBalances[game[gameKey].playerTwo] = 0;
       }
     }
-  }
+  } 
   
-  
-  function withdrawBalance(bytes32 playersUniqueKey) public
+  function withdrawBalance(bytes32 gameKey) public
   {
-    require (playersUniqueKey!=0,"playersUniqueKey required");
-    require (players[playersUniqueKey].winnersAddress == msg.sender,"Invalid address");
-    require (playersBalances[msg.sender] > 0,"No funds available");
-    require (players[playersUniqueKey].complete || (!players[playersUniqueKey].complete && players[playersUniqueKey].playerOneEntryDateTimeStamp + timeLimit <= now),"Cannot withdraw funds.");
-    emit LogWithdrawalAmount(msg.sender,players[playersUniqueKey].winnings);
+    require (gameKey!=0, "Game key invalid");
+    require (game[gameKey].gameStage == GameStage.GameOver || (game[gameKey].gameStage == GameStage.PlayerTwoMoved && game[gameKey].playerOneMoveTimestamp + timeLimit <= now),"Game has not finished.");
+    require (playersBalances[msg.sender] > 0,"You have no funds to transfer.");
+    bool timeLimitReached = game[gameKey].gameStage == GameStage.PlayerTwoMoved && game[gameKey].playerOneMoveTimestamp + timeLimit <= now;
+    if (timeLimitReached)
+    {
+      game[gameKey].gameStage = GameStage.GameOver;
+      playersBalances[game[gameKey].playerOne] += game [gameKey].gameBalances[game[gameKey].playerOne];
+      game[gameKey].gameBalances[game[gameKey].playerOne] = 0;
+      playersBalances[game[gameKey].playerTwo] += game [gameKey].gameBalances[game[gameKey].playerTwo];
+      game[gameKey].gameBalances[game[gameKey].playerTwo] = 0;
+    }
+    emit LogWithdrawalAmount(msg.sender,playersBalances[msg.sender]);
+    
     uint playerBalance = playersBalances[msg.sender];
     playersBalances[msg.sender] = 0;
-    players[playersUniqueKey].winnersAddress.transfer(playerBalance);
+    msg.sender.transfer(playerBalance);
   }
 
 }
