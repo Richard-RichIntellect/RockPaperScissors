@@ -11,23 +11,23 @@ contract RockPaperScissors {
     bytes32 playerOneMoveHash;
     HandGestureEnum playerTwoMove;
     GameStage gameStage;
-    uint gameNumber;
     uint playerOneMoveTimestamp;
     mapping (address => uint) gameBalances;
   }
 
   uint timeLimit = 1 days;
-  uint private gameNumber = 1;
+  uint private gameNumber = 0;
 
   mapping (bytes32 => GameStruct) public game;
-  mapping (bytes32 => bool) public gameKeyUsed;
   mapping (address => uint) public playersBalances;
 
-  event LogAddToPlayerBalance(address player, uint balanceAdded);
+  event LogAddToPlayerBalanceWithHandGesture(address player, uint balanceAdded,bytes32 gameKey, HandGestureEnum handGestureHash, bool oldWinnings);
+  event LogAddToPlayerBalance(address player, uint balanceAdded,bytes32 gameKey, bytes32 handGestureHash, bool oldWinnings);
   event LogWinner(address player, uint winnings);
   event LogWithdrawalAmount(address player, uint amount);
   event LogTransferAmount(address player, uint amount);
   event LogTie(address playerOne, uint playerOneBalance, address playerTwo, uint playerTwoBalance);
+  event LogPlayerMoveTotalBalance(address playerOne, uint playerOneBalance);
 
   constructor() public {
 
@@ -46,13 +46,11 @@ contract RockPaperScissors {
 
   function playerOneStartGameWithFunds(bytes32 gameKey, bytes32 handGestureHash, bool oldWinnings) public payable returns (bytes32)
   {
-    emit LogAddToPlayerBalance(msg.sender, msg.value);
-
+    emit LogAddToPlayerBalance(msg.sender, msg.value, gameKey, handGestureHash, oldWinnings);
+    require (gameKey!=0, "Game key invalid");
     require (game[gameKey].gameStage == GameStage.DoesNotExist,"This game has already started.");
-    require (!gameKeyUsed[gameKey], "Game key has been used.");
     require (!oldWinnings || (oldWinnings && playersBalances[msg.sender] > 0),"You have no funds to transfer.");
-   
-    gameKeyUsed[gameKey] = true;
+    
     gameNumber += 1;
 
     game[gameKey].gameStage = GameStage.PlayerOneMoved;
@@ -70,13 +68,15 @@ contract RockPaperScissors {
     }
     game[gameKey].gameBalances[msg.sender] = msg.value + additionalFunds;
     game[gameKey].playerOneMoveTimestamp = now;
-    game[gameKey].gameNumber = gameNumber;
+
+    emit LogPlayerMoveTotalBalance(msg.sender,game[gameKey].gameBalances[msg.sender]);
+
   }
 
  
   function playerTwoEnterAndPlayWithFunds(bytes32 gameKey, HandGestureEnum handGesture, bool oldWinnings) public payable
   {
-    emit LogAddToPlayerBalance(msg.sender, msg.value);
+    emit LogAddToPlayerBalanceWithHandGesture(msg.sender, msg.value, gameKey, handGesture, oldWinnings);
     require (gameKey!=0, "Game key invalid");
     require (game[gameKey].gameStage == GameStage.PlayerOneMoved,"This game has already started.");
     require (!oldWinnings || (oldWinnings && playersBalances[msg.sender] > 0),"You have no funds to transfer.");
@@ -96,6 +96,7 @@ contract RockPaperScissors {
     game[gameKey].gameBalances[msg.sender] += msg.value + additionalFunds;
     game[gameKey].playerTwoMove = handGesture;
 
+    emit LogPlayerMoveTotalBalance(msg.sender,game[gameKey].gameBalances[msg.sender]);
 
   }
 
