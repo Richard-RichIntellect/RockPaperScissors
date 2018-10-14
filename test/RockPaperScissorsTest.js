@@ -3,7 +3,7 @@ const expectedExceptionPromise = require("./expected_exception_testRPC_and_geth.
 
 contract('RockPaperScissors', function (accounts) {
   let instance;
-  let gameKey;
+  let gameId;
   let playerOneBalance;
   let playerTwoBalance;
 
@@ -24,7 +24,7 @@ contract('RockPaperScissors', function (accounts) {
         return instance.generateGameKey()
       .then(result => {
         console.log(result)
-        gameKey = result;
+        gameId = result;
       })
      
   })
@@ -96,21 +96,29 @@ console.log(!instance);
 //   });
 // });
 
-let handMovement;
+let handMovementHash;
 
 describe ("A suite of functions to test RockPaperScissors with new instance", () =>{ 
 
     beforeEach(function () {
       return instance.generateHandMovement(0,playerOne)
-      .then(result => handMovement = result)
+      .then(result => handMovementHash = result)
       .catch(results => console.log(results)); 
     });
 
     beforeEach(function () {
-      return instance.playerOneStartGameWithFunds(gameKey, handMovement, false, { from: playerOne, value: web3.toWei('0.1', 'ether') });
-      
+      return instance.addFunds({ from: playerOne, value: web3.toWei('0.2', 'ether')  });
     });
 
+    beforeEach(function () {
+      return instance.addFunds( { from: playerTwo, value: web3.toWei('0.2', 'ether') });
+    });
+
+    beforeEach(function () {
+      return instance.playerOnePlayMove(gameId, handMovementHash, web3.toWei('0.1', 'ether'), { from: playerOne });
+    });
+
+    
 
 
   //   it("should not be able to withdraw balance unless you are the winner.", async function () {
@@ -168,10 +176,10 @@ describe ("A suite of functions to test RockPaperScissors with new instance", ()
 
     it("should allow Player one to win.", async function () {
 
-      await instance.playerTwoEnterAndPlayWithFunds(gameKey, 2, false,  { from: playerTwo, value: web3.toWei('0.01', 'ether') });
-      await instance.revealResults(gameKey, gameKey,  { from: playerOne })
+      await instance.playerTwoEnterPlayMove(gameId, 2, web3.toWei('0.01', 'ether'),  { from: playerTwo  });
+      await instance.revealWinnerPlayerOne(gameId, gameId,  { from: playerOne })
 
-      return instance.withdrawBalance(gameKey, { from: playerOne })
+      return instance.withdrawFunds(web3.toWei('0.01', 'ether'), { from: playerOne })
         .then(result => {
           assert.isTrue(true);
         })      
@@ -181,11 +189,11 @@ describe ("A suite of functions to test RockPaperScissors with new instance", ()
 
     it("should allow Player two to win.", async function () {
 
-      await instance.playerTwoEnterAndPlayWithFunds(gameKey, 1, false,  { from: playerTwo, value: web3.toWei('0.01', 'ether') })
+      await instance.playerTwoEnterPlayMove(gameId, 1,  web3.toWei('0.01', 'ether'),  { from: playerTwo  });
 
-      await instance.revealResults(gameKey, gameKey,  { from: playerOne})
+      await instance.revealWinnerPlayerOne(gameId, gameId,  { from: playerOne})
 
-      return instance.withdrawBalance(gameKey, { from: playerTwo })
+      return instance.withdrawFunds(web3.toWei('0.01', 'ether'), { from: playerTwo })
         .then(result => {
           assert.isTrue(true);
         })
@@ -195,13 +203,13 @@ describe ("A suite of functions to test RockPaperScissors with new instance", ()
 
     it("should allow a draw.", async function () {
 
-      await instance.playerTwoEnterAndPlayWithFunds(gameKey, 0, false,  { from: playerTwo, value: web3.toWei('0.01', 'ether') })
+      await instance.playerTwoEnterPlayMove(gameId, 0,  web3.toWei('0.01', 'ether'),  { from: playerTwo  });
 
-      await instance.revealResults(gameKey, gameKey,  { from: playerOne })
+      await instance.revealWinnerPlayerOne(gameId, gameId,  { from: playerOne })
 
-      return instance.withdrawBalance(gameKey, { from: playerOne })
+      return instance.withdrawFunds(web3.toWei('0.01', 'ether'), { from: playerOne })
         .then(result => {
-          return instance.withdrawBalance(gameKey, { from: playerTwo })
+          return instance.withdrawFunds(web3.toWei('0.01', 'ether'), { from: playerTwo })
         })
         .then(result => {
           assert.isTrue(true);

@@ -16,18 +16,19 @@ contract RockPaperScissors {
   }
 
   uint timeLimit = 1 days;
-  uint private gameNumber = 0;
+  uint private gameNumber;
 
   mapping (bytes32 => GameStruct) public game;
-  mapping (address => uint) public playersBalances;
+  mapping (address => uint) public playersAvailableFunds;
 
-  event LogAddToPlayerBalanceWithHandGesture(address player, uint balanceAdded,bytes32 gameKey, HandGestureEnum handGestureHash, bool oldWinnings);
-  event LogAddToPlayerBalance(address player, uint balanceAdded,bytes32 gameKey, bytes32 handGestureHash, bool oldWinnings);
+  event LogPlayerStartWithHandGesture(address player, bytes32 gameId, HandGestureEnum handGestureHash, uint amountToSpend);
+  event LogPlayerStart(address player,bytes32 gameId, bytes32 handGestureHash, uint amountToSpend);
   event LogWinner(address player, uint winnings);
-  event LogWithdrawalAmount(address player, uint amount);
-  event LogTransferAmount(address player, uint amount);
+  event LogWithdrawalAmount(address player, uint fundsToWithdraw);
   event LogTie(address playerOne, uint playerOneBalance, address playerTwo, uint playerTwoBalance);
   event LogPlayerMoveTotalBalance(address playerOne, uint playerOneBalance);
+  event AbandonGame(address player,bytes32 gameId);
+  event LogAddToPlayerFunds(address player,uint funds);
 
   constructor() public {
 
@@ -44,126 +45,126 @@ contract RockPaperScissors {
   }
 
 
-  function playerOneStartGameWithFunds(bytes32 gameKey, bytes32 handGestureHash, bool oldWinnings) public payable returns (bytes32)
+  function playerOnePlayMove(bytes32 gameId, bytes32 handGestureHash, uint amountToSpend) public  
   {
-    emit LogAddToPlayerBalance(msg.sender, msg.value, gameKey, handGestureHash, oldWinnings);
-    require (gameKey!=0, "Game key invalid");
-    require (game[gameKey].gameStage == GameStage.DoesNotExist,"This game has already started.");
-    require (!oldWinnings || (oldWinnings && playersBalances[msg.sender] > 0),"You have no funds to transfer.");
+    emit LogPlayerStart(msg.sender,  gameId, handGestureHash, amountToSpend);
+    require (gameId!=0, "Game key invalid");
+    GameStruct currentGame = game[gameId];
+    require (currentGame.gameStage == GameStage.DoesNotExist,"This game has already started.");
+    require ((playersAvailableFunds[msg.sender] >= amountToSpend), "You do not have that much available to spend.");
     
     gameNumber += 1;
 
-    game[gameKey].gameStage = GameStage.PlayerOneMoved;
+    currentGame.gameStage = GameStage.PlayerOneMoved;
+    currentGame.playerOne = msg.sender;
+    currentGame.playerOneMoveHash = handGestureHash;
+    currentGame.gameBalances[msg.sender] +=  amountToSpend;
+    playersAvailableFunds[msg.sender] -= amountToSpend;
+    currentGame.playerOneMoveTimestamp = now;
 
-    uint additionalFunds = 0;
-
-
-    game[gameKey].playerOne = msg.sender;
-    game[gameKey].playerOneMoveHash = handGestureHash;
-    if (oldWinnings)
-    {
-      additionalFunds = playersBalances[msg.sender];
-      game[gameKey].gameBalances[msg.sender] = 0;
-      emit LogWithdrawalAmount(msg.sender,additionalFunds);
-    }
-    game[gameKey].gameBalances[msg.sender] = msg.value + additionalFunds;
-    game[gameKey].playerOneMoveTimestamp = now;
-
-    emit LogPlayerMoveTotalBalance(msg.sender,game[gameKey].gameBalances[msg.sender]);
+    emit LogPlayerMoveTotalBalance(msg.sender,currentGame.gameBalances[msg.sender]);
 
   }
 
- 
-  function playerTwoEnterAndPlayWithFunds(bytes32 gameKey, HandGestureEnum handGesture, bool oldWinnings) public payable
+  function playerTwoEnterPlayMove(bytes32 gameId, HandGestureEnum handGesture, uint amountToSpend) public 
   {
-    emit LogAddToPlayerBalanceWithHandGesture(msg.sender, msg.value, gameKey, handGesture, oldWinnings);
-    require (gameKey!=0, "Game key invalid");
-    require (game[gameKey].gameStage == GameStage.PlayerOneMoved,"This game has already started.");
-    require (!oldWinnings || (oldWinnings && playersBalances[msg.sender] > 0),"You have no funds to transfer.");
+    emit LogPlayerStartWithHandGesture(msg.sender, gameId, handGesture, amountToSpend);
+    require (gameId!=0, "Game key invalid");
+    GameStruct currentGame = game[gameId];
+    require (currentGame.gameStage == GameStage.PlayerOneMoved,"This game has already started.");
+    require (playersAvailableFunds[msg.sender] >= amountToSpend,  "You do not have that much available to spend.");
     
-    game[gameKey].gameStage = GameStage.PlayerTwoMoved;
-
-    uint additionalFunds = 0;
-
-    if (oldWinnings)
-    {
-      additionalFunds = playersBalances[msg.sender];
-      game[gameKey].gameBalances[msg.sender] = 0;
-      emit LogWithdrawalAmount(msg.sender,additionalFunds);
-    }
-
-    game[gameKey].playerTwo = msg.sender;
-    game[gameKey].gameBalances[msg.sender] += msg.value + additionalFunds;
-    game[gameKey].playerTwoMove = handGesture;
-
-    emit LogPlayerMoveTotalBalance(msg.sender,game[gameKey].gameBalances[msg.sender]);
+    currentGame.gameStage = GameStage.PlayerTwoMoved;
+    currentGame.playerTwo = msg.sender;
+    currentGame.gameBalances[msg.sender] += amountToSpend;
+    playersAvailableFunds[msg.sender] -= amountToSpend;
+    currentGame.playerTwoMove = handGesture;
 
   }
 
-  function revealResults(bytes32 gameKey,bytes32 playerOnePrivateKey) public
+  function convertPlayerOneHandGesture(bytes32 playerOneMoveHash,bytes32 playerOnePrivateKey) private returns (HandGestureEnum handGestureEnum)
   {
-    require (gameKey!=0, "Game key invalid");
-    require (game[gameKey].playerOne == msg.sender,"You are not player one in this game.");
-    require (game[gameKey].gameStage == GameStage.PlayerTwoMoved,"Not all players have made their moves.");
-    game[gameKey].gameStage = GameStage.GameOver;
+      HandGestureEnum playerOneHandGesture = HandGestureEnum.None;
 
-    HandGestureEnum playerOneHandGesture = HandGestureEnum.None;
-    bytes32 playerOneMove = game[gameKey].playerOneMoveHash;
-    if (playerOneMove == generateHandMovement(HandGestureEnum.Rock,playerOnePrivateKey))
-      playerOneHandGesture = HandGestureEnum.Rock;
-    else if (playerOneMove == generateHandMovement(HandGestureEnum.Paper,playerOnePrivateKey))
-      playerOneHandGesture = HandGestureEnum.Paper;
-    else if (playerOneMove == generateHandMovement(HandGestureEnum.Scissors,playerOnePrivateKey)) 
-      playerOneHandGesture = HandGestureEnum.Scissors;
+      if (playerOneMoveHash == generateHandMovement(HandGestureEnum.Rock,playerOnePrivateKey))
+        playerOneHandGesture = HandGestureEnum.Rock;
+      else if (playerOneMoveHash == generateHandMovement(HandGestureEnum.Paper,playerOnePrivateKey))
+        playerOneHandGesture = HandGestureEnum.Paper;
+      else if (playerOneMoveHash == generateHandMovement(HandGestureEnum.Scissors,playerOnePrivateKey)) 
+        playerOneHandGesture = HandGestureEnum.Scissors;
 
-    uint totalWinnings = game[gameKey].gameBalances[game[gameKey].playerOne] + game[gameKey].gameBalances[game[gameKey].playerTwo];
+      return (playerOneHandGesture);
+  }
 
-    if (uint(playerOneHandGesture)-uint(game[gameKey].playerTwoMove)+5 % 3 == 0)
+  function revealWinnerPlayerOne(bytes32 gameId,bytes32 playerOnePrivateKey) public
+  {
+    require (gameId!=0, "Game key invalid");
+    GameStruct currentGame = game[gameId];
+    require (currentGame.playerOne == msg.sender,"You are not player one in this game.");
+    require (currentGame.gameStage == GameStage.PlayerTwoMoved,"Not all players have made their moves.");
+    currentGame.gameStage = GameStage.GameOver;
+
+    HandGestureEnum playerOneHandGesture = convertPlayerOneHandGesture(currentGame.playerOneMoveHash,playerOnePrivateKey);
+
+    uint availableWinnings = currentGame.gameBalances[currentGame.playerOne] + currentGame.gameBalances[currentGame.playerTwo];
+    uint winnerId = uint(playerOneHandGesture)-uint(currentGame.playerTwoMove)+5 % 3;
+
+    if (winnerId == 0)
     {
-      emit LogWinner(game[gameKey].playerOne,totalWinnings);
-      playersBalances[game[gameKey].playerOne] += totalWinnings;
-      game[gameKey].gameBalances[game[gameKey].playerOne] = 0;
-      game[gameKey].gameBalances[game[gameKey].playerTwo] = 0;
+        emit LogWinner(currentGame.playerOne,availableWinnings);
+        playersAvailableFunds[currentGame.playerOne] += availableWinnings;
     }
-    else
+
+    if (winnerId == 1) 
     {
-      if (uint(playerOneHandGesture)-uint(game[gameKey].playerTwoMove)+5 % 3 == 1)
-      {
-        emit LogWinner(game[gameKey].playerTwo,totalWinnings);
-        playersBalances[game[gameKey].playerTwo] += totalWinnings;
-        game[gameKey].gameBalances[game[gameKey].playerOne] = 0;
-        game[gameKey].gameBalances[game[gameKey].playerTwo] = 0;
-      }
-      else
-      {
-        emit LogTie(game[gameKey].playerOne,game[gameKey].gameBalances[game[gameKey].playerOne], game[gameKey].playerTwo,game[gameKey].gameBalances[game[gameKey].playerTwo]);
-        playersBalances[game[gameKey].playerOne] += game[gameKey].gameBalances[game[gameKey].playerOne];
-        playersBalances[game[gameKey].playerTwo] += game[gameKey].gameBalances[game[gameKey].playerTwo];
-        game[gameKey].gameBalances[game[gameKey].playerOne] = 0;
-        game[gameKey].gameBalances[game[gameKey].playerTwo] = 0;
-      }
+        emit LogWinner(currentGame.playerTwo,availableWinnings);
+        playersAvailableFunds[currentGame.playerTwo] += availableWinnings;
     }
+
+    if (winnerId > 1)
+    {
+        emit LogTie(currentGame.playerOne,currentGame.gameBalances[currentGame.playerOne], currentGame.playerTwo,currentGame.gameBalances[currentGame.playerTwo]);
+        playersAvailableFunds[currentGame.playerOne] += currentGame.gameBalances[currentGame.playerOne];
+        playersAvailableFunds[currentGame.playerTwo] += currentGame.gameBalances[currentGame.playerTwo];
+    }
+    
+    currentGame.gameBalances[currentGame.playerOne] = 0;
+    currentGame.gameBalances[currentGame.playerTwo] = 0;
+    
   } 
-  
-  function withdrawBalance(bytes32 gameKey) public
+
+  function addFunds() public payable
   {
-    require (gameKey!=0, "Game key invalid");
-    require (game[gameKey].gameStage == GameStage.GameOver || (game[gameKey].gameStage == GameStage.PlayerTwoMoved && game[gameKey].playerOneMoveTimestamp + timeLimit <= now),"Game has not finished.");
-    require (playersBalances[msg.sender] > 0,"You have no funds to transfer.");
-    bool timeLimitReached = game[gameKey].gameStage == GameStage.PlayerTwoMoved && game[gameKey].playerOneMoveTimestamp + timeLimit <= now;
-    if (timeLimitReached)
-    {
-      game[gameKey].gameStage = GameStage.GameOver;
-      playersBalances[game[gameKey].playerOne] += game [gameKey].gameBalances[game[gameKey].playerOne];
-      game[gameKey].gameBalances[game[gameKey].playerOne] = 0;
-      playersBalances[game[gameKey].playerTwo] += game [gameKey].gameBalances[game[gameKey].playerTwo];
-      game[gameKey].gameBalances[game[gameKey].playerTwo] = 0;
-    }
-    emit LogWithdrawalAmount(msg.sender,playersBalances[msg.sender]);
+    emit LogAddToPlayerFunds(msg.sender, msg.value);
+    playersAvailableFunds[msg.sender] += msg.value;
+  }
+  
+  function withdrawFunds(uint fundsToWithdraw) public
+  {
+    emit LogWithdrawalAmount(msg.sender,fundsToWithdraw);
+    require (playersAvailableFunds[msg.sender] > 0,"You have no funds to withdraw.");
+    require (playersAvailableFunds[msg.sender] >= fundsToWithdraw,  "You do not have that much available to withdraw.");
     
-    uint playerBalance = playersBalances[msg.sender];
-    playersBalances[msg.sender] = 0;
+
+    
+    uint playerBalance = playersAvailableFunds[msg.sender] - fundsToWithdraw;
+    playersAvailableFunds[msg.sender] -= fundsToWithdraw;
     msg.sender.transfer(playerBalance);
+  }
+
+  function abandonGame(bytes32 gameId) public {
+    emit AbandonGame(msg.sender,gameId);
+    require (gameId!=0, "Game key invalid");
+    GameStruct currentGame = game[gameId];
+    require (currentGame.playerOne == msg.sender || currentGame.playerTwo == msg.sender,"Unauthorised");
+    require (currentGame.gameStage == GameStage.PlayerTwoMoved,"Cannot withdraw marooned funds unless player two has moved.");
+    require (currentGame.playerOneMoveTimestamp + timeLimit <= now, "You cannot withdraw funds until the time limit expires for player one to reveal his hand gesture.");
+
+    currentGame.gameStage = GameStage.GameOver;
+    playersAvailableFunds[currentGame.playerOne] += currentGame.gameBalances[currentGame.playerOne];
+    currentGame.gameBalances[currentGame.playerOne] = 0;
+    playersAvailableFunds[currentGame.playerTwo] += currentGame.gameBalances[currentGame.playerTwo];
+    currentGame.gameBalances[currentGame.playerTwo] = 0;
   }
 
 }
