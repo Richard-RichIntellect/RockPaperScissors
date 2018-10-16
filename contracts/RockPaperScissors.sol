@@ -2,7 +2,7 @@ pragma solidity 0.4.24;
 
 contract RockPaperScissors {
   enum HandGestureEnum {Rock,Paper,Scissors,None}
-
+  enum GameEnum {Tie, PlayerOneWin,PlayerTwoWin }
   enum GameStage {DoesNotExist, PlayerOneMoved, PlayerTwoMoved, GameOver}
 
   struct GameStruct {
@@ -15,20 +15,24 @@ contract RockPaperScissors {
     mapping (address => uint) gameBalances;
   }
 
-  uint timeLimit = 1 days;
+  uint timeLimit = 1 seconds;
   uint private gameNumber;
 
   mapping (bytes32 => GameStruct) public game;
   mapping (address => uint) public playersAvailableFunds;
 
-  event LogPlayerStartWithHandGesture(address player, bytes32 gameId, HandGestureEnum handGestureHash, uint amountToSpend);
-  event LogPlayerStart(address player,bytes32 gameId, bytes32 handGestureHash, uint amountToSpend);
-  event LogWinner(address player, uint winnings);
+  event LogplayerTwoEnterPlayMove(address player, bytes32 gameId, HandGestureEnum handGestureHash, uint amountToSpend);
+  event LogplayerOnePlayMove(address player,bytes32 gameId, bytes32 handGestureHash, uint amountToSpend);
+  event LogWinnerPlayerOne(address player, uint winnings);
+  event LogWinnerPlayerTwo(address player, uint winnings);
   event LogWithdrawalAmount(address player, uint fundsToWithdraw);
   event LogTie(address playerOne, uint playerOneBalance, address playerTwo, uint playerTwoBalance);
   event LogPlayerMoveTotalBalance(address playerOne, uint playerOneBalance);
-  event AbandonGame(address player,bytes32 gameId);
+  event LogplayerOneClaimsPlayerTwoNoShow(address player,bytes32 gameId);
+  event LogplayerTwoClaimsPlayerOnesWinning(address player,bytes32 gameId);
   event LogAddToPlayerFunds(address player,uint funds);
+
+  event LogDebug(uint win, uint lose, uint tie, uint winnerId);
 
   constructor() public {
 
@@ -37,17 +41,17 @@ contract RockPaperScissors {
   
 
   function generateGameKey() public view returns(bytes32) {
-	  return keccak256(abi.encodePacked(msg.sender, address(this),gameNumber));
+    return keccak256(abi.encodePacked(msg.sender, address(this),gameNumber));
   }
 
   function generateHandMovement(HandGestureEnum handMovement,bytes32 key) public view returns(bytes32) {
-	  return keccak256(abi.encodePacked(address(this),gameNumber,handMovement,key));
+    return keccak256(abi.encodePacked(address(this),gameNumber,handMovement,key));
   }
 
 
   function playerOnePlayMove(bytes32 gameId, bytes32 handGestureHash, uint amountToSpend) public  
   {
-    emit LogPlayerStart(msg.sender,  gameId, handGestureHash, amountToSpend);
+    emit LogplayerOnePlayMove(msg.sender,  gameId, handGestureHash, amountToSpend);
     require (gameId!=0, "Game key invalid");
     GameStruct currentGame = game[gameId];
     require (currentGame.gameStage == GameStage.DoesNotExist,"This game has already started.");
@@ -58,7 +62,7 @@ contract RockPaperScissors {
     currentGame.gameStage = GameStage.PlayerOneMoved;
     currentGame.playerOne = msg.sender;
     currentGame.playerOneMoveHash = handGestureHash;
-    currentGame.gameBalances[msg.sender] +=  amountToSpend;
+    currentGame.gameBalances[msg.sender] += amountToSpend;
     playersAvailableFunds[msg.sender] -= amountToSpend;
     currentGame.playerOneMoveTimestamp = now;
 
@@ -68,7 +72,7 @@ contract RockPaperScissors {
 
   function playerTwoEnterPlayMove(bytes32 gameId, HandGestureEnum handGesture, uint amountToSpend) public 
   {
-    emit LogPlayerStartWithHandGesture(msg.sender, gameId, handGesture, amountToSpend);
+    emit LogplayerTwoEnterPlayMove(msg.sender, gameId, handGesture, amountToSpend);
     require (gameId!=0, "Game key invalid");
     GameStruct currentGame = game[gameId];
     require (currentGame.gameStage == GameStage.PlayerOneMoved,"This game has already started.");
@@ -82,54 +86,56 @@ contract RockPaperScissors {
 
   }
 
-  function convertPlayerOneHandGesture(bytes32 playerOneMoveHash,bytes32 playerOnePrivateKey) private returns (HandGestureEnum handGestureEnum)
+  function convertPlayerOneHandGesture(bytes32 playerOneMoveHash,bytes32 playerOnePrivateKey) private view returns (HandGestureEnum)
   {
-      HandGestureEnum playerOneHandGesture = HandGestureEnum.None;
+    HandGestureEnum playerOneHandGesture = HandGestureEnum.None;
 
-      if (playerOneMoveHash == generateHandMovement(HandGestureEnum.Rock,playerOnePrivateKey))
+    if (playerOneMoveHash == generateHandMovement(HandGestureEnum.Rock,playerOnePrivateKey))
         playerOneHandGesture = HandGestureEnum.Rock;
-      else if (playerOneMoveHash == generateHandMovement(HandGestureEnum.Paper,playerOnePrivateKey))
+    else if (playerOneMoveHash == generateHandMovement(HandGestureEnum.Paper,playerOnePrivateKey))
         playerOneHandGesture = HandGestureEnum.Paper;
-      else if (playerOneMoveHash == generateHandMovement(HandGestureEnum.Scissors,playerOnePrivateKey)) 
+    else if (playerOneMoveHash == generateHandMovement(HandGestureEnum.Scissors,playerOnePrivateKey)) 
         playerOneHandGesture = HandGestureEnum.Scissors;
+    else
+        playerOneHandGesture = HandGestureEnum.None;
 
-      return (playerOneHandGesture);
+    return (playerOneHandGesture);
   }
 
   function revealWinnerPlayerOne(bytes32 gameId,bytes32 playerOnePrivateKey) public
   {
     require (gameId!=0, "Game key invalid");
-    GameStruct currentGame = game[gameId];
-    require (currentGame.playerOne == msg.sender,"You are not player one in this game.");
-    require (currentGame.gameStage == GameStage.PlayerTwoMoved,"Not all players have made their moves.");
-    currentGame.gameStage = GameStage.GameOver;
+    GameStruct cg = game[gameId];
+    require (cg.playerOne == msg.sender,"You are not player one in this game.");
+    require (cg.gameStage == GameStage.PlayerTwoMoved,"Not all players have made their moves.");
+    cg.gameStage = GameStage.GameOver;
 
-    HandGestureEnum playerOneHandGesture = convertPlayerOneHandGesture(currentGame.playerOneMoveHash,playerOnePrivateKey);
+    HandGestureEnum playerOneHandGesture = convertPlayerOneHandGesture(cg.playerOneMoveHash,playerOnePrivateKey);
 
-    uint availableWinnings = currentGame.gameBalances[currentGame.playerOne] + currentGame.gameBalances[currentGame.playerTwo];
-    uint winnerId = uint(playerOneHandGesture)-uint(currentGame.playerTwoMove)+5 % 3;
+    uint availableWinnings = cg.gameBalances[cg.playerOne] + cg.gameBalances[cg.playerTwo];
+    uint winnerId = (uint(playerOneHandGesture)-uint(cg.playerTwoMove)) % 3;
 
-    if (winnerId == 0)
+    if (winnerId == uint(GameEnum.PlayerOneWin))
     {
-        emit LogWinner(currentGame.playerOne,availableWinnings);
-        playersAvailableFunds[currentGame.playerOne] += availableWinnings;
+      emit LogWinnerPlayerOne(cg.playerOne,availableWinnings);
+      playersAvailableFunds[cg.playerOne] += availableWinnings;
     }
 
-    if (winnerId == 1) 
+    if (winnerId == uint(GameEnum.PlayerTwoWin)) 
     {
-        emit LogWinner(currentGame.playerTwo,availableWinnings);
-        playersAvailableFunds[currentGame.playerTwo] += availableWinnings;
+      emit LogWinnerPlayerTwo(cg.playerTwo,availableWinnings);
+      playersAvailableFunds[cg.playerTwo] += availableWinnings;
     }
 
-    if (winnerId > 1)
+    if (winnerId == uint(GameEnum.Tie))
     {
-        emit LogTie(currentGame.playerOne,currentGame.gameBalances[currentGame.playerOne], currentGame.playerTwo,currentGame.gameBalances[currentGame.playerTwo]);
-        playersAvailableFunds[currentGame.playerOne] += currentGame.gameBalances[currentGame.playerOne];
-        playersAvailableFunds[currentGame.playerTwo] += currentGame.gameBalances[currentGame.playerTwo];
+      emit LogTie(cg.playerOne,cg.gameBalances[cg.playerOne], cg.playerTwo,cg.gameBalances[cg.playerTwo]);
+      playersAvailableFunds[cg.playerOne] += cg.gameBalances[cg.playerOne];
+      playersAvailableFunds[cg.playerTwo] += cg.gameBalances[cg.playerTwo];
     }
-    
-    currentGame.gameBalances[currentGame.playerOne] = 0;
-    currentGame.gameBalances[currentGame.playerTwo] = 0;
+    emit  LogDebug(uint(GameEnum.PlayerOneWin),uint(GameEnum.PlayerTwoWin),uint(GameEnum.Tie), winnerId);
+    cg.gameBalances[cg.playerOne] = 0;
+    cg.gameBalances[cg.playerTwo] = 0;
     
   } 
 
@@ -144,27 +150,34 @@ contract RockPaperScissors {
     emit LogWithdrawalAmount(msg.sender,fundsToWithdraw);
     require (playersAvailableFunds[msg.sender] > 0,"You have no funds to withdraw.");
     require (playersAvailableFunds[msg.sender] >= fundsToWithdraw,  "You do not have that much available to withdraw.");
-    
 
-    
     uint playerBalance = playersAvailableFunds[msg.sender] - fundsToWithdraw;
     playersAvailableFunds[msg.sender] -= fundsToWithdraw;
     msg.sender.transfer(playerBalance);
   }
 
-  function abandonGame(bytes32 gameId) public {
-    emit AbandonGame(msg.sender,gameId);
+  function playerOneClaimsPlayerTwoNoShow(bytes32 gameId) public {
+    emit LogplayerOneClaimsPlayerTwoNoShow(msg.sender,gameId);
     require (gameId!=0, "Game key invalid");
-    GameStruct currentGame = game[gameId];
-    require (currentGame.playerOne == msg.sender || currentGame.playerTwo == msg.sender,"Unauthorised");
-    require (currentGame.gameStage == GameStage.PlayerTwoMoved,"Cannot withdraw marooned funds unless player two has moved.");
-    require (currentGame.playerOneMoveTimestamp + timeLimit <= now, "You cannot withdraw funds until the time limit expires for player one to reveal his hand gesture.");
+    GameStruct cg = game[gameId];
+    require (cg.gameStage == GameStage.PlayerOneMoved,"Invalid");
+    require (cg.playerOneMoveTimestamp + timeLimit <= now, "You cannot abandon game until the time limit expires.");
 
-    currentGame.gameStage = GameStage.GameOver;
-    playersAvailableFunds[currentGame.playerOne] += currentGame.gameBalances[currentGame.playerOne];
-    currentGame.gameBalances[currentGame.playerOne] = 0;
-    playersAvailableFunds[currentGame.playerTwo] += currentGame.gameBalances[currentGame.playerTwo];
-    currentGame.gameBalances[currentGame.playerTwo] = 0;
+    playersAvailableFunds[game[gameId].playerOne] += cg.gameBalances[cg.playerOne]; 
+    cg.gameBalances[cg.playerOne] = 0;
+    cg.gameBalances[cg.playerTwo] = 0;
+  }
+
+  function playerTwoClaimsPlayerOnesWinning(bytes32 gameId) public {
+    emit LogplayerTwoClaimsPlayerOnesWinning(msg.sender,gameId);
+    require (gameId!=0, "Game key invalid");
+    GameStruct cg = game[gameId];
+    require (cg.gameStage == GameStage.PlayerTwoMoved,"Invalid");
+    require (cg.playerOneMoveTimestamp + timeLimit <= now, "You cannot abandon game until the time limit expires.");
+
+    playersAvailableFunds[cg.playerTwo] += (cg.gameBalances[cg.playerOne] + cg.gameBalances[cg.playerTwo]);
+    cg.gameBalances[cg.playerOne] = 0;
+    cg.gameBalances[cg.playerTwo] = 0;
   }
 
 }
