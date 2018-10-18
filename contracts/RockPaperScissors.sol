@@ -11,11 +11,11 @@ contract RockPaperScissors {
     bytes32 playerOneMoveHash;
     HandGestureEnum playerTwoMove;
     GameStage gameStage;
-    uint playerOneMoveTimestamp;
+    uint deadline;
     mapping (address => uint) gameBalances;
   }
 
-  uint timeLimit = 1 seconds;
+  uint timeLimit = 1 hours;
   uint private gameNumber;
 
   mapping (bytes32 => GameStruct) public game;
@@ -38,25 +38,25 @@ contract RockPaperScissors {
 
   }
 
-  
-
   function generateGameKey() public view returns(bytes32) {
     return keccak256(abi.encodePacked(msg.sender, address(this),gameNumber));
   }
 
   function generateHandMovement(HandGestureEnum handMovement,bytes32 key) public view returns(bytes32) {
-    return keccak256(abi.encodePacked(address(this),gameNumber,handMovement,key));
+    return keccak256(abi.encodePacked(address(this),handMovement,key));
   }
 
 
   function playerOnePlayMove(bytes32 gameId, bytes32 handGestureHash, uint amountToSpend) public  
   {
-    emit LogplayerOnePlayMove(msg.sender,  gameId, handGestureHash, amountToSpend);
+
     require (gameId!=0, "Game key invalid");
-    GameStruct currentGame = game[gameId];
+    require (handGestureHash!=0, "handGestureHash is invalid");
+    GameStruct storage currentGame = game[gameId];
     require (currentGame.gameStage == GameStage.DoesNotExist,"This game has already started.");
     require ((playersAvailableFunds[msg.sender] >= amountToSpend), "You do not have that much available to spend.");
-    
+    emit LogplayerOnePlayMove(msg.sender,  gameId, handGestureHash, amountToSpend);
+
     gameNumber += 1;
 
     currentGame.gameStage = GameStage.PlayerOneMoved;
@@ -64,7 +64,7 @@ contract RockPaperScissors {
     currentGame.playerOneMoveHash = handGestureHash;
     currentGame.gameBalances[msg.sender] += amountToSpend;
     playersAvailableFunds[msg.sender] -= amountToSpend;
-    currentGame.playerOneMoveTimestamp = now;
+    currentGame.deadline = now + timeLimit;
 
     emit LogPlayerMoveTotalBalance(msg.sender,currentGame.gameBalances[msg.sender]);
 
@@ -72,12 +72,13 @@ contract RockPaperScissors {
 
   function playerTwoEnterPlayMove(bytes32 gameId, HandGestureEnum handGesture, uint amountToSpend) public 
   {
-    emit LogplayerTwoEnterPlayMove(msg.sender, gameId, handGesture, amountToSpend);
     require (gameId!=0, "Game key invalid");
-    GameStruct currentGame = game[gameId];
-    require (currentGame.gameStage == GameStage.PlayerOneMoved,"This game has already started.");
+    GameStruct storage currentGame = game[gameId];
+    require (currentGame.gameStage == GameStage.PlayerOneMoved,"You cannot play your move until player one has completed his.");
     require (playersAvailableFunds[msg.sender] >= amountToSpend,  "You do not have that much available to spend.");
-    
+    require (currentGame.gameBalances[currentGame.playerOne] == amountToSpend,"You must bet the same amount as player one.");
+    emit LogplayerTwoEnterPlayMove(msg.sender, gameId, handGesture, amountToSpend);
+
     currentGame.gameStage = GameStage.PlayerTwoMoved;
     currentGame.playerTwo = msg.sender;
     currentGame.gameBalances[msg.sender] += amountToSpend;
@@ -86,7 +87,7 @@ contract RockPaperScissors {
 
   }
 
-  function convertPlayerOneHandGesture(bytes32 playerOneMoveHash,bytes32 playerOnePrivateKey) private view returns (HandGestureEnum)
+  function convertPlayerOneHandGesture(bytes32 playerOneMoveHash,bytes32 playerOnePrivateKey) public view returns (HandGestureEnum)
   {
     HandGestureEnum playerOneHandGesture = HandGestureEnum.None;
 
@@ -105,7 +106,7 @@ contract RockPaperScissors {
   function revealWinnerPlayerOne(bytes32 gameId,bytes32 playerOnePrivateKey) public
   {
     require (gameId!=0, "Game key invalid");
-    GameStruct cg = game[gameId];
+    GameStruct storage cg = game[gameId];
     require (cg.playerOne == msg.sender,"You are not player one in this game.");
     require (cg.gameStage == GameStage.PlayerTwoMoved,"Not all players have made their moves.");
     cg.gameStage = GameStage.GameOver;
@@ -133,7 +134,7 @@ contract RockPaperScissors {
       playersAvailableFunds[cg.playerOne] += cg.gameBalances[cg.playerOne];
       playersAvailableFunds[cg.playerTwo] += cg.gameBalances[cg.playerTwo];
     }
-    emit  LogDebug(uint(GameEnum.PlayerOneWin),uint(GameEnum.PlayerTwoWin),uint(GameEnum.Tie), winnerId);
+
     cg.gameBalances[cg.playerOne] = 0;
     cg.gameBalances[cg.playerTwo] = 0;
     
@@ -147,9 +148,10 @@ contract RockPaperScissors {
   
   function withdrawFunds(uint fundsToWithdraw) public
   {
-    emit LogWithdrawalAmount(msg.sender,fundsToWithdraw);
+
     require (playersAvailableFunds[msg.sender] > 0,"You have no funds to withdraw.");
     require (playersAvailableFunds[msg.sender] >= fundsToWithdraw,  "You do not have that much available to withdraw.");
+    emit LogWithdrawalAmount(msg.sender,fundsToWithdraw);
 
     uint playerBalance = playersAvailableFunds[msg.sender] - fundsToWithdraw;
     playersAvailableFunds[msg.sender] -= fundsToWithdraw;
@@ -157,11 +159,11 @@ contract RockPaperScissors {
   }
 
   function playerOneClaimsPlayerTwoNoShow(bytes32 gameId) public {
-    emit LogplayerOneClaimsPlayerTwoNoShow(msg.sender,gameId);
     require (gameId!=0, "Game key invalid");
-    GameStruct cg = game[gameId];
+    GameStruct storage cg = game[gameId];
     require (cg.gameStage == GameStage.PlayerOneMoved,"Invalid");
-    require (cg.playerOneMoveTimestamp + timeLimit <= now, "You cannot abandon game until the time limit expires.");
+    require (cg.deadline  <= now, "You cannot abandon game until the time limit expires.");
+    emit LogplayerOneClaimsPlayerTwoNoShow(msg.sender,gameId);
 
     playersAvailableFunds[game[gameId].playerOne] += cg.gameBalances[cg.playerOne]; 
     cg.gameBalances[cg.playerOne] = 0;
@@ -169,11 +171,11 @@ contract RockPaperScissors {
   }
 
   function playerTwoClaimsPlayerOnesWinning(bytes32 gameId) public {
-    emit LogplayerTwoClaimsPlayerOnesWinning(msg.sender,gameId);
     require (gameId!=0, "Game key invalid");
-    GameStruct cg = game[gameId];
+    GameStruct storage cg = game[gameId];
     require (cg.gameStage == GameStage.PlayerTwoMoved,"Invalid");
-    require (cg.playerOneMoveTimestamp + timeLimit <= now, "You cannot abandon game until the time limit expires.");
+    require (cg.deadline  <= now, "You cannot abandon game until the time limit expires.");
+    emit LogplayerTwoClaimsPlayerOnesWinning(msg.sender,gameId);
 
     playersAvailableFunds[cg.playerTwo] += (cg.gameBalances[cg.playerOne] + cg.gameBalances[cg.playerTwo]);
     cg.gameBalances[cg.playerOne] = 0;
